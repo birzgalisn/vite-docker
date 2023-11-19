@@ -1,0 +1,141 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build image
+    runs-on: ubuntu-latest
+    environment: Production
+
+    strategy:
+      matrix:
+        platform:
+          - linux/amd64
+          - linux/arm64
+        app:
+          - vite
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: ${{ github.repository }}-${{ matrix.app }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+        with:
+          platforms: ${{ matrix.platform }}
+
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Cache Docker layers
+        uses: actions/cache@v3
+        with:
+          path: |
+            /tmp/.buildx-cache
+          key: ${{ runner.os }}-${{ matrix.platform }}-${{ matrix.app }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.platform }}-${{ matrix.app }}-
+            ${{ runner.os }}-${{ matrix.platform }}-
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: Dockerfile
+          build-args: |
+            ENV_VARIABLE=${{ secrets.ENV_VARIABLE }}
+            VITE_ENV_VARIABLE=${{ vars.VITE_ENV_VARIABLE }}
+          builder: ${{ steps.buildx.outputs.name }}
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=${{ github.repository }}-${{ matrix.app }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-to: type=local,mode=max,dest=/tmp/.buildx-cache-new
+
+      - name: Export digest
+        run: |
+          DIGEST=${{ steps.build.outputs.digest }}
+          DIGEST_DIR=/tmp/digests/${{ matrix.app }}
+          mkdir -p $DIGEST_DIR
+          touch "$DIGEST_DIR/${DIGEST#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v3
+        with:
+          name: digests
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Move cache
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+
+  merge:
+    name: Push image
+    runs-on: ubuntu-latest
+    environment: Production
+
+    needs:
+      - build
+
+    strategy:
+      matrix:
+        app:
+          - vite
+
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v3
+        with:
+          name: digests
+          path: /tmp/digests
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: ${{ github.repository }}-${{ matrix.app }}
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Create manifest list and push
+        working-directory: /tmp/digests/${{ matrix.app }}
+        run: |
+          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ github.repository }}-${{ matrix.app }}@sha256:%s ' *)
+
+      - name: Inspect image
+        run: |
+          docker buildx imagetools inspect ${{ github.repository }}-${{ matrix.app }}:${{ steps.meta.outputs.version }}
