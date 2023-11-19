@@ -1,0 +1,7 @@
+vite.{$CNAME} {
+  redir https://www.vite.{$CNAME}{uri}
+}
+
+www.vite.{$CNAME} {
+  reverse_proxy vite:3000
+}

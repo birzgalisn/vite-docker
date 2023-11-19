@@ -1,0 +1,43 @@
+version: "3.8"
+
+name: vite-docker
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+networks:
+  proxy_net:
+
+x-vite-dev: &vite-dev
+  image: vite-docker/vite:dev
+  build:
+    context: ../../
+    dockerfile: Dockerfile
+    target: installer
+  command: ["pnpm", "dev"]
+  volumes:
+    - ../../:/app
+  networks:
+    - proxy_net
+
+services:
+  vite:
+    <<: *vite-dev
+    hostname: vite
+
+  caddy:
+    image: caddy:2.7.5-alpine
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - ../Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      - CNAME=${CNAME:-localhost}
+    networks:
+      - proxy_net
+    depends_on:
+      - vite

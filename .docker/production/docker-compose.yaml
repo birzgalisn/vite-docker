@@ -1,0 +1,42 @@
+version: "3.8"
+
+name: vite-docker
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+networks:
+  proxy_net:
+
+x-vite-prod: &vite-prod
+  image: vite-docker/vite:latest
+  build:
+    context: ../../
+    dockerfile: Dockerfile
+    args:
+      - ENV_VARIABLE=${ENV_VARIABLE:-env_variable}
+      - VITE_ENV_VARIABLE=${VITE_ENV_VARIABLE:-vite_env_variable}
+  networks:
+    - proxy_net
+
+services:
+  vite:
+    <<: *vite-prod
+    hostname: vite
+
+  caddy:
+    image: caddy:2.7.5-alpine
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - ../Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      - CNAME=${CNAME:-localhost}
+    networks:
+      - proxy_net
+    depends_on:
+      - vite
