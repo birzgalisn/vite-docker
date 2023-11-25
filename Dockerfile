@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM node:20.9.0-alpine AS base
+FROM node:20.10.0-alpine AS base
 
 ENV PNPM_HOME=/root/.local/share/pnpm
 ENV PATH=$PATH:$PNPM_HOME
@@ -32,7 +32,8 @@ ENV ENV_VARIABLE=${ENV_VARIABLE}
 ENV VITE_ENV_VARIABLE=${VITE_ENV_VARIABLE}
 
 COPY . ./
-COPY --from=installer /app/package.json /app/pnpm-lock.yaml /app/node_modules ./
+COPY --from=installer /app/node_modules ./node_modules
+COPY --from=installer /app/package.json /app/pnpm-lock.yaml ./
 RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store pnpm build
 
 FROM nginx:1.25.3-alpine AS final
